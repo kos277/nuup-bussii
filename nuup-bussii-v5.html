@@ -2,7 +2,7 @@
 <!--
 ╔════════════════════════════════════════════════════════════════════════════╗
 ║                         NUUP BUSSII+ TRANSIT APP                          ║
-║                                  v5.1                                      ║
+║                                  v5.2                                      ║
 ║                      Last Updated: 2025-04-28 (April)                      ║
 ╚════════════════════════════════════════════════════════════════════════════╝
 
@@ -13,8 +13,9 @@ PROJECT VISION:
 ARCHITECTURE:
   • Format: Single self-contained HTML file (no build, no server)
   • Maps: Leaflet.js (OpenStreetMap tiles)
-  • Data: Hardcoded STOPS object + imported TIMETABLES
+  • Data: Auto-fetches from GitHub + hardcoded STOPS object
   • Storage: window.storage API (browser persistence) + localStorage for metadata
+  • Sync: Timetables fetch from backups/timetables.json on GitHub
   • Weather: Open-Meteo API (current conditions)
   • Routes: R1, R2, R3 (daily) + RX2, RX3 (weekday only)
   • Stops: 70+ across Nuuk
@@ -24,6 +25,8 @@ CURRENT STATUS:
   ✅ WORKING: Admin timetable editor (route/day/trip selection)
   ✅ WORKING: Timetable import from formatted text
   ✅ WORKING: Data export/import (backup & restore as JSON)
+  ✅ WORKING: Auto-fetch timetables from GitHub on startup
+  ✅ WORKING: Graceful fallback if GitHub unavailable (uses cache)
   ✅ WORKING: Map with colored stops, click for details
   ✅ WORKING: Bottom sheet (peek/half/full states)
   ✅ WORKING: Favorites, weather widget, date/time picker
@@ -34,9 +37,33 @@ TECH STACK:
   • Map Library: Leaflet.js 1.9.4
   • Storage API: window.storage (artifact persistence)
   • Local Storage: localStorage for metadata (export timestamps)
+  • GitHub API: fetch() to auto-load timetables.json
   • API: Open-Meteo (weather, no key required)
   • Browser: Modern browsers (Chrome 90+, Firefox 88+, Safari 14+)
   • Timezone: America/Godthab (Nuuk timezone)
+
+GITHUB AUTO-FETCH WORKFLOW:
+
+  On App Startup:
+    1. Load cached timetables from window.storage (instant)
+    2. Try to fetch from GitHub: /backups/timetables.json
+    3. If successful: update cache + display
+    4. If offline/unavailable: use cache silently
+    5. User sees timetables either way
+
+  Update Timetables:
+    1. Admin → Timetables → Import (import new times)
+    2. Admin → Data → Export Timetables as JSON
+    3. Save as: backups/timetables.json (replaces old one)
+    4. Commit to GitHub
+    5. Next user opening app: auto-fetches new times
+
+  Benefits:
+    ✅ No manual import needed by users
+    ✅ Always synced with repo
+    ✅ Works offline after first load (cached)
+    ✅ Single HTML file (no build step)
+    ✅ Transparent to end users
 
 DATA STRUCTURES:
 
@@ -48,7 +75,7 @@ DATA STRUCTURES:
     }
     Note: Coordinates are approximate. Corrections stored in window.storage.
 
-  TIMETABLES Object:
+  TIMETABLES Object (fetched from GitHub):
     {
       R1: {
         label: "Route 1",
@@ -83,6 +110,7 @@ FEATURES BY MODULE:
   Favorites: ★ button saves stops, persists across sessions
   Weather: Current temp/wind, bus/taxi recommendation
   Date/Time Picker: Weekday/weekend scheduling
+  GitHub Sync: Auto-fetch timetables.json on startup
 
 IMPORT FORMAT (for Timetables):
   ROUTEID|DAY
@@ -92,7 +120,7 @@ IMPORT FORMAT (for Timetables):
 
 EXPORT FORMAT (Data backups):
   {
-    "version": "5.0",
+    "version": "5.2",
     "exported": "ISO timestamp",
     "timetables": { ... complete TIMETABLES object ... }
   }
@@ -103,6 +131,7 @@ KNOWN LIMITATIONS:
   ✗ Weekend R3 has fewer trips
   ✗ No route planner
   ✗ Stop position editor not yet built (UI ready)
+  ✗ GitHub fetch requires internet (first load only, then cached)
 
 NEXT PRIORITIES:
   1. Stop position editor (drag on map to correct coords)
@@ -117,35 +146,38 @@ HOW TO ITERATE:
   5. Upload to GitHub web or via git
   6. Commit with message
 
-WORKFLOW FOR DATA PERSISTENCE:
-  1. Import timetables via Admin → Timetables → Import
-  2. Go to Admin → Data → Export Timetables as JSON
-  3. Save JSON file to repo backups/ folder (timetables-YYYY-MM-DD.json)
+WORKFLOW FOR DATA UPDATES:
+  1. Update timetables: Admin → Timetables → Import (paste new data)
+  2. Export data: Admin → Data → Export Timetables as JSON
+  3. Save file: backups/timetables.json (static name)
   4. Commit to GitHub
-  5. Future versions can restore from this backup
-  6. Data lives in repo, not just in browser storage
+  5. Users' apps auto-fetch next time they open the app
+  6. No manual import needed for end users
 
 TESTING CHECKLIST:
   □ Map loads with all stops
+  □ App auto-fetches timetables from GitHub on open
+  □ Check console (F12) for "✓ Timetables loaded from GitHub"
   □ Click stop → sheet appears with timetable
   □ Next bus shows with countdown
   □ Admin panel → Timetables works
-  □ Admin panel → Data → Export creates JSON file
+  □ Admin panel → Data → Export creates timetables.json
   □ Admin panel → Data → Import restores from JSON
-  □ Import button works
   □ Favorites save/delete
+  □ Works offline (after first load with internet)
   □ No console errors
 
-REPOSITORY:
+REPOSITORY STRUCTURE:
   nuup-bussii/
-  ├── nuup-bussii-v5.1.html        (this file)
+  ├── nuup-bussii-v5.2.html        (this file)
   ├── README.md
   ├── DEVELOPMENT.md
   ├── .gitignore
   └── backups/
-      └── timetables-YYYY-MM-DD.json (exported data)
+      └── timetables.json          (auto-fetched by app)
 
 ═══════════════════════════════════════════════════════════════════════════════
+v5.2 (2025-04-28): Auto-fetch timetables from GitHub, transparent to users
 v5.1 (2025-04-28): Added Data export/import feature for backups & restores
 v5.0 (2025-04-28): All routes imported, admin timetable editor working
 ═══════════════════════════════════════════════════════════════════════════════
@@ -620,7 +652,7 @@ function copyPrompt(){
 function exportData(){
   const today=new Date().toISOString().split('T')[0];
   const data={
-    version:'5.0',
+    version:'5.2',
     exported:new Date().toISOString(),
     timetables:TIMETABLES
   };
@@ -629,11 +661,11 @@ function exportData(){
   const url=URL.createObjectURL(blob);
   const a=document.createElement('a');
   a.href=url;
-  a.download=`timetables-${today}.json`;
+  a.download='timetables.json';
   a.click();
   URL.revokeObjectURL(url);
   localStorage.setItem('nuup_last_export',today);
-  alert(`✓ Exported as timetables-${today}.json\n\nSave to: backups/ folder in repo`);
+  alert(`✓ Exported as timetables.json\n\nSave to: backups/ folder\nThen commit to GitHub\n\nApp will auto-fetch from GitHub next time it opens!`);
   renderDataTab();
 }
 
@@ -655,6 +687,21 @@ function importData(){
 // STORAGE
 async function saveTimetables(){try{await window.storage.set('nuup_timetables_v5',JSON.stringify(TIMETABLES));}catch{}}
 async function loadTimetables(){try{const r=await window.storage.get('nuup_timetables_v5');if(r)TIMETABLES=JSON.parse(r.value);}catch{}}
+
+// FETCH FROM GITHUB
+async function loadTimetablesFromGitHub(){
+  try{
+    const url='https://raw.githubusercontent.com/kos277/nuup-bussii/main/backups/timetables.json';
+    const response=await fetch(url);
+    if(!response.ok)throw new Error(`GitHub fetch failed: ${response.status}`);
+    const data=await response.json();
+    TIMETABLES=data.timetables||data;
+    await saveTimetables();
+    console.log('✓ Timetables loaded from GitHub');
+  }catch(e){
+    console.log('GitHub unavailable, using cached timetables:',e.message);
+  }
+}
 
 // FAVORITES
 async function loadFavorites(){try{const r=await window.storage.get('nuup_favs_v5');if(r)favorites=JSON.parse(r.value);}catch{}}
@@ -679,7 +726,7 @@ function initPickers(){
   setInterval(()=>{if(isPickedToday()){const n=nuukNow();timeEl.value=`${String(n.getHours()).padStart(2,'0')}:${String(n.getMinutes()).padStart(2,'0')}`;if(activeStop)renderStopSheet(activeStop);}},60000);
 }
 
-window.addEventListener('DOMContentLoaded',async()=>{await loadTimetables();await loadFavorites();initPickers();initMap();fetchWeather();});
+window.addEventListener('DOMContentLoaded',async()=>{await loadTimetables();await loadTimetablesFromGitHub();await loadFavorites();initPickers();initMap();fetchWeather();});
 </script>
 </body>
 </html>
