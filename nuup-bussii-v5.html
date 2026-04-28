@@ -1,0 +1,581 @@
+<!DOCTYPE html>
+<!--
+╔════════════════════════════════════════════════════════════════════════════╗
+║                         NUUP BUSSII+ TRANSIT APP                          ║
+║                                  v5.0                                      ║
+║                      Last Updated: 2025-04-28 (April)                      ║
+╚════════════════════════════════════════════════════════════════════════════╝
+
+PROJECT VISION:
+  Self-contained transit app for Nuuk, Greenland bus schedules.
+  Goal: Better UX than bus.gl with offline functionality and easy maintenance.
+
+ARCHITECTURE:
+  • Format: Single self-contained HTML file (no build, no server)
+  • Maps: Leaflet.js (OpenStreetMap tiles)
+  • Data: Hardcoded STOPS object + imported TIMETABLES
+  • Storage: window.storage API (browser persistence)
+  • Weather: Open-Meteo API (current conditions)
+  • Routes: R1, R2, R3 (daily) + RX2, RX3 (weekday only)
+  • Stops: 70+ across Nuuk
+
+CURRENT STATUS:
+  ✅ COMPLETE: All 5 routes with timetables (weekday + weekend)
+  ✅ WORKING: Admin timetable editor (route/day/trip selection)
+  ✅ WORKING: Timetable import from formatted text
+  ✅ WORKING: Map with colored stops, click for details
+  ✅ WORKING: Bottom sheet (peek/half/full states)
+  ✅ WORKING: Favorites, weather widget, date/time picker
+  ✅ WORKING: GPS centering, route colors match bus.gl
+
+TECH STACK:
+  • Language: Vanilla JavaScript (no frameworks)
+  • Map Library: Leaflet.js 1.9.4
+  • Storage API: window.storage (artifact persistence)
+  • API: Open-Meteo (weather, no key required)
+  • Browser: Modern browsers (Chrome 90+, Firefox 88+, Safari 14+)
+  • Timezone: America/Godthab (Nuuk timezone)
+
+DATA STRUCTURES:
+
+  STOPS Object:
+    const STOPS = {
+      stopId: [latitude, longitude, "Stop Name"],
+      1: [64.1812, -51.7178, "Eqalugalinnguit"],
+      ...
+    }
+    Note: Coordinates are approximate. Corrections stored in window.storage.
+
+  TIMETABLES Object:
+    {
+      R1: {
+        label: "Route 1",
+        color: "#ff6b9d",
+        data: {
+          weekday: {
+            stops: [18, 1, 47, 63, ...],
+            trips: [
+              ["05:49", "05:50", "05:53", "05:54", ...],
+              ["06:09", "06:10", "06:13", "06:14", ...],
+            ]
+          },
+          weekend: { stops: [...], trips: [...] }
+        }
+      },
+      R2: {...}, R3: {...}, RX2: {...}, RX3: {...}
+    }
+
+  Route Colors:
+    R1: #ff6b9d (pink)        R2: #ffd60a (yellow)     R3: #30d158 (green)
+    RX2: #98989d (grey)       RX3: #ff9f0a (orange)
+
+FEATURES BY MODULE:
+
+  Map: Leaflet map, stops as colored markers, click for timetable
+  Bottom Sheet: Peek/half/full states, favorites, weather
+  Timetable Logic: Smart time display, color-coded chips, auto-updates
+  Admin Panel: Route selector, day selector, editable trip grid, import/export
+  Favorites: ★ button saves stops, persists across sessions
+  Weather: Current temp/wind, bus/taxi recommendation
+  Date/Time Picker: Weekday/weekend scheduling
+
+IMPORT FORMAT (for Timetables):
+  ROUTEID|DAY
+  STOPID,STOPID,...
+  TIME TIME TIME ...
+  (one line per trip)
+
+KNOWN LIMITATIONS:
+  ✗ Stop coordinates are approximate
+  ✗ RX2/RX3 weekday only
+  ✗ Weekend R3 has fewer trips
+  ✗ No route planner
+  ✗ Data export/import UI not yet built
+
+NEXT PRIORITIES:
+  1. Stop position editor (drag on map)
+  2. Data backup system (export/import JSON)
+  3. Polish (PWA, offline, optimizations)
+
+HOW TO ITERATE:
+  1. Describe feature in chat
+  2. Claude updates this HTML
+  3. Download, test locally
+  4. git commit -m "feat/fix: description"
+  5. git push to GitHub
+
+TESTING CHECKLIST:
+  □ Map loads with all stops
+  □ Click stop → sheet appears with timetable
+  □ Next bus shows with countdown
+  □ Admin panel → Timetables works
+  □ Import button works
+  □ Favorites save/delete
+  □ No console errors
+
+REPOSITORY:
+  nuup-bussii/
+  ├── nuup-bussii-v5.html
+  ├── README.md
+  ├── DEVELOPMENT.md
+  └── .gitignore
+
+═══════════════════════════════════════════════════════════════════════════════
+v5.0 (2025-04-28): All routes imported, admin timetable editor working
+═══════════════════════════════════════════════════════════════════════════════
+-->
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>Nuup Bussii+ v5</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css"/>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;overflow:hidden}
+#map{position:fixed;inset:0;z-index:0}
+#topbar{position:fixed;top:0;left:0;right:0;padding:10px 12px;z-index:400;pointer-events:none;display:flex;gap:8px}
+.top-pill{background:#fff;border-radius:28px;box-shadow:0 2px 10px rgba(0,0,0,.18);padding:10px 16px;pointer-events:all;display:flex;align-items:center;gap:10px;flex:1}
+.app-logo{font-size:18px}
+.app-name{font-size:14px;font-weight:700;color:#1a73e8;flex:1}
+.dt-row{display:flex;align-items:center;gap:6px;font-size:12px}
+input[type=date],input[type=time]{border:none;background:transparent;font-family:inherit;font-size:12px;color:#444;outline:none;cursor:pointer;padding:2px 4px}
+input[type=date]:focus,input[type=time]:focus{background:#f0f4ff}
+.sched-badge{font-size:10px;font-weight:600;padding:3px 8px;border-radius:10px;white-space:nowrap}
+.s-wd{background:#e8f0fe;color:#1a73e8}
+.s-we{background:#fef3e2;color:#e8710a}
+.admin-btn{background:#f8f9fa;border:1px solid #dadce0;border-radius:8px;padding:7px 12px;font-size:12px;cursor:pointer;color:#5f6368;font-family:inherit;pointer-events:all}
+.admin-btn:hover{background:#e8e8e8}
+.admin-btn.active{background:#1a73e8;color:#fff;border-color:#1a73e8}
+#fabs{position:fixed;right:14px;bottom:200px;z-index:400;display:flex;flex-direction:column;gap:10px}
+.fab{width:48px;height:48px;border-radius:50%;border:none;background:#fff;box-shadow:0 2px 8px rgba(0,0,0,.25);font-size:20px;cursor:pointer;display:flex;align-items:center;justify-content:center}
+.fab:hover{transform:scale(1.08)}
+.fab-small{width:40px;height:40px;font-size:16px}
+#fabs.hidden{display:none}
+#sheet{position:fixed;left:0;right:0;bottom:0;z-index:300;background:#fff;border-radius:20px 20px 0 0;box-shadow:0 -2px 20px rgba(0,0,0,.15);transform:translateY(calc(100% - 72px));transition:transform .3s;max-height:85vh;display:flex;flex-direction:column}
+#sheet.half{transform:translateY(calc(100% - 260px))}
+#sheet.full{transform:translateY(0)}
+#sheet-handle-wrap{padding:10px 0 6px;flex-shrink:0;cursor:grab}
+#sheet-handle{width:40px;height:4px;background:#dadce0;border-radius:2px;margin:0 auto}
+#sheet-scroll{flex:1;overflow-y:auto;padding:0 16px 24px}
+#sheet-scroll::-webkit-scrollbar{display:none}
+#sheet.hidden{display:none}
+.sheet-section{margin-bottom:16px}
+.sheet-title{font-size:12px;font-weight:600;color:#9aa0a6;text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px}
+.stop-name-big{font-size:20px;font-weight:700;color:#202124;line-height:1.2}
+.stop-num-small{font-size:12px;color:#9aa0a6;margin-top:2px}
+.route-row{margin:10px 0 0}
+.route-row-head{display:flex;align-items:center;gap:7px;margin-bottom:6px}
+.route-badge{font-size:11px;font-weight:700;padding:3px 9px;border-radius:10px;color:#fff}
+.route-trips{font-size:11px;color:#9aa0a6;margin-left:auto}
+.chips{display:flex;flex-wrap:wrap;gap:5px}
+.chip{font-size:13px;font-weight:500;padding:5px 10px;border-radius:8px;border:1.5px solid}
+.chip-next{background:#1a73e8;border-color:#1a73e8;color:#fff}
+.chip-soon{background:#fff;border-color:#dadce0;color:#444}
+.chip-past{background:#f8f9fa;border-color:#f0f0f0;color:#bbb}
+.no-svc{font-size:13px;color:#bbb;padding:4px 0}
+.sm{width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:700;color:#fff;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.4);cursor:pointer;line-height:1;transition:transform .12s}
+.sm:hover{transform:scale(1.3);z-index:999}
+.sm.active{transform:scale(1.4);box-shadow:0 2px 8px rgba(0,0,0,.5)}
+
+/* ADMIN */
+#admin-editor{position:fixed;inset:0;background:#fff;z-index:500;display:none;flex-direction:column}
+#admin-editor.show{display:flex}
+.editor-top{background:#1a73e8;color:#fff;padding:12px 16px;display:flex;justify-content:space-between;align-items:center;flex-shrink:0}
+.editor-top h2{font-size:14px;font-weight:700}
+.editor-tabs{display:flex;gap:0;border-bottom:1px solid #dadce0}
+.editor-tab{padding:12px 16px;border:none;background:none;cursor:pointer;font-family:inherit;font-size:13px;color:#5f6368;border-bottom:3px solid transparent}
+.editor-tab.active{color:#1a73e8;border-bottom-color:#1a73e8}
+.editor-content{flex:1;overflow-y:auto;padding:16px}
+.editor-btns{display:flex;gap:8px}
+.editor-btn{background:#fff;color:#1a73e8;border:none;border-radius:6px;padding:8px 12px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit}
+.editor-btn:hover{background:#f0f0f0}
+.editor-btn.danger{background:#ea4335;color:#fff}
+.editor-btn.danger:hover{background:#c5221f}
+.editor-btn.success{background:#34a853;color:#fff}
+.editor-btn.success:hover{background:#188038}
+
+/* Timetable Editor */
+.route-selector{display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap}
+.route-btn{padding:8px 14px;border:1.5px solid #dadce0;border-radius:8px;background:#fff;cursor:pointer;font-family:inherit;font-size:13px;color:#5f6368;transition:all .15s}
+.route-btn.active{background:#1a73e8;color:#fff;border-color:#1a73e8}
+.day-selector{display:flex;gap:8px;margin-bottom:16px}
+.day-btn{padding:8px 14px;border:1.5px solid #dadce0;border-radius:8px;background:#fff;cursor:pointer;font-family:inherit;font-size:13px;color:#5f6368}
+.day-btn.active{background:#1a73e8;color:#fff;border-color:#1a73e8}
+.timetable-view{display:flex;flex-direction:column;gap:10px}
+.trip-row{display:flex;gap:8px;padding:10px;background:#f8f9fa;border-radius:8px}
+.trip-row input{flex:1;padding:6px;border:1px solid #dadce0;border-radius:4px;font-family:monospace;font-size:12px}
+.trip-row button{padding:6px 12px;background:#ea4335;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:11px;font-weight:600}
+.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:600;display:none;align-items:center;justify-content:center;padding:20px}
+.modal-overlay.show{display:flex}
+.modal{background:#fff;border-radius:12px;padding:20px;width:100%;max-width:500px;max-height:80vh;overflow-y:auto}
+.modal-title{font-size:16px;font-weight:700;color:#202124;margin-bottom:12px}
+.modal-text{font-size:12px;color:#5f6368;line-height:1.5;margin-bottom:12px}
+.modal-textarea{width:100%;padding:10px;border:1.5px solid #dadce0;border-radius:8px;font-family:monospace;font-size:11px;resize:vertical;font-family:inherit;min-height:250px}
+.modal-btns{display:flex;gap:8px;margin-top:12px}
+.modal-btns button{flex:1;padding:10px;border:none;border-radius:8px;cursor:pointer;font-family:inherit;font-weight:600}
+.btn-save{background:#34a853;color:#fff}
+.btn-cancel{background:#f8f9fa;color:#5f6368}
+.btn-copy{background:#1a73e8;color:#fff}
+.prompt-display{background:#f8f9fa;border:1.5px solid #dadce0;border-radius:8px;padding:12px;margin:12px 0;font-size:11px;font-family:monospace;line-height:1.4;max-height:200px;overflow-y:auto}
+</style>
+</head>
+<body>
+
+<div id="map"></div>
+
+<div id="topbar">
+  <div class="top-pill">
+    <span class="app-logo">🚌</span>
+    <span class="app-name">Nuup Bussii+ v5</span>
+    <div class="dt-row">
+      <input type="date" id="pick-date">
+      <input type="time" id="pick-time">
+      <span id="sched-badge" class="sched-badge s-wd">Weekday</span>
+    </div>
+  </div>
+  <button class="admin-btn" id="admin-toggle" onclick="toggleAdmin()">Admin</button>
+</div>
+
+<div id="fabs">
+  <button class="fab fab-small" onclick="toggleFavPanel()">★</button>
+  <button class="fab" onclick="goToGPS()">◎</button>
+</div>
+
+<div id="sheet">
+  <div id="sheet-handle-wrap"><div id="sheet-handle"></div></div>
+  <div id="sheet-scroll"></div>
+</div>
+
+<!-- ADMIN MODE -->
+<div id="admin-editor">
+  <div class="editor-top">
+    <h2>Admin Panel</h2>
+    <div class="editor-btns">
+      <button class="editor-btn danger" onclick="closeAdmin()">✕ Close</button>
+    </div>
+  </div>
+  <div class="editor-tabs">
+    <button class="editor-tab active" onclick="switchEditorTab('stops')">Stops</button>
+    <button class="editor-tab" onclick="switchEditorTab('timetables')">Timetables</button>
+  </div>
+  <div class="editor-content" id="editor-content">
+    <!-- Content filled by JS -->
+  </div>
+</div>
+
+<!-- IMPORT TIMETABLES MODAL -->
+<div class="modal-overlay" id="import-modal">
+  <div class="modal">
+    <div class="modal-title">Import Timetables</div>
+    <div class="modal-text">
+      Paste formatted timetable data below. Each line = one route's trips.
+      <br><strong>Format:</strong><br>
+      <code style="display:block;background:#f0f0f0;padding:8px;margin:6px 0;border-radius:4px">
+ROUTEID|DAY<br>
+STOPID,STOPID,...<br>
+TIME TIME TIME ...<br>
+TIME TIME TIME ...<br>
+(repeat for each trip)
+      </code>
+      <br><strong>Example:</strong>
+      <code style="display:block;background:#f0f0f0;padding:8px;margin:6px 0;border-radius:4px">
+R1|weekday<br>
+18,1,47,63<br>
+05:49 05:50 05:53 05:54<br>
+06:09 06:10 06:13 06:14
+      </code>
+    </div>
+    <textarea class="modal-textarea" id="import-text" placeholder="Paste timetable data here..."></textarea>
+    <div class="modal-btns">
+      <button class="btn-cancel" onclick="closeImportModal()">Cancel</button>
+      <button class="btn-save" onclick="importTimetables()">Import</button>
+    </div>
+  </div>
+</div>
+
+<!-- CLAUDE PROMPT MODAL -->
+<div class="modal-overlay" id="prompt-modal">
+  <div class="modal">
+    <div class="modal-title">Claude Scraping Prompt</div>
+    <div class="modal-text">Copy this prompt and paste it into Claude with a Nuup Bussii timetable PDF to extract timetable data:</div>
+    <div class="prompt-display" id="prompt-display"></div>
+    <div class="modal-btns">
+      <button class="btn-copy" onclick="copyPrompt()">📋 Copy Prompt</button>
+      <button class="btn-cancel" onclick="closePromptModal()">Close</button>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script>
+'use strict';
+
+// STOPS
+const STOPS = {
+  1:[64.1812,-51.7178,"Eqalugalinnguit"],2:[64.1832,-51.7208,"Nunngarut"],3:[64.1888,-51.7118,"Illorput"],
+  4:[64.1908,-51.7168,"Nigerleq"],5:[64.1922,-51.7092,"Sangoriaq"],6:[64.1942,-51.7038,"Nuniaffik"],
+  7:[64.1928,-51.6988,"Qajaasat"],8:[64.1952,-51.6962,"Paarnat"],9:[64.1852,-51.7148,"Eqalugalinnguit Tasiat"],
+  10:[64.1818,-51.7442,"H.J.Rinksvej"],11:[64.1832,-51.7502,"Rasmuuseeqqap Aqq."],12:[64.1815,-51.7462,"Kuussuaq"],
+  13:[64.1795,-51.7408,"Nuup Qeqqa"],14:[64.1782,-51.7348,"Katersortarfik"],15:[64.1778,-51.7302,"N.I."],
+  16:[64.1762,-51.7262,"Qatserisut"],17:[64.1842,-51.7128,"Sarfaannguit"],18:[64.1878,-51.7082,"Akunnerit"],
+  19:[64.1938,-51.7018,"Nukalloq"],24:[64.1742,-51.7282,"Narsarsuaq"],27:[64.1722,-51.7248,"Tuujuk"],
+  28:[64.1715,-51.7218,"Røde etagehuse"],35:[64.1862,-51.7298,"Qernertunnguanut"],36:[64.1948,-51.7068,"Atertaq"],
+  37:[64.2008,-51.6918,"Ilimmarfik"],38:[64.2012,-51.6838,"Nukappiakuluk"],39:[64.2022,-51.6778,"Napasuliaq"],
+  40:[64.2008,-51.6748,"Air Greenland adm."],41:[64.1952,-51.6688,"Asiarpak"],46:[64.1982,-51.6922,"Qattaaq"],
+  47:[64.1972,-51.6978,"Naluttarfik Malik"],48:[64.1995,-51.6995,"Ilimmarfik (48)"],49:[64.1988,-51.6958,"Manguaraq"],
+  50:[64.1992,-51.6548,"Tikiusaaq"],52:[64.1812,-51.7228,"400-rtalik"],54:[64.1912,-51.6548,"Atuarfik Hans Lynge"],
+  56:[64.1852,-51.6592,"Suloraq"],57:[64.1868,-51.6568,"Unaaq Kitaa"],58:[64.1748,-51.7371,"Nuuk Center"],
+  59:[64.1892,-51.7102,"Narsarviaq"],60:[64.1892,-51.6568,"Igimaq"],61:[64.1942,-51.6578,"Unaaq"],
+  62:[64.1768,-51.7398,"Kommuneqarfik"],63:[64.1948,-51.6618,"Maligiaq"],64:[64.1962,-51.6802,"Pukuffik"],
+  66:[64.1988,-51.6728,"Mittarfik / Lufthavn"],67:[64.2042,-51.6788,"Isertitsiviit"],68:[64.1978,-51.6818,"Qeqertanut 1"],
+  69:[64.1968,-51.6818,"Qeqertanut 2"],70:[64.1958,-51.6818,"Qeqertanut 3"],
+};
+
+// TIMETABLES - NEW FORMAT
+let TIMETABLES = {
+  R1:{label:"Route 1",color:"#ff6b9d",data:{weekday:{stops:[18,1,47,63,50,54,56,57,60,61,41,64,46,8,9,52,28,27,62,58,24],trips:[]},weekend:{stops:[18,1,47,63,50,54,56,57,60,61,41,64,46,8,9,52,28,27,62,58,24],trips:[]}}},
+  R2:{label:"Route 2",color:"#ffd60a",data:{weekday:{stops:[17,18,7,1,36,48,49,19,2,59,3,4,5,6,7,8,9,10,11,12,13,14,15,16],trips:[]},weekend:{stops:[17,18,7,1,36,48,49,19,2,59,3,4,5,6,7,8,9,10,11,12,13,14,15,16],trips:[]}}},
+  R3:{label:"Route 3",color:"#30d158",data:{weekday:{stops:[10,11,12,13,14,15,16,17,18,35,1,2,59,3,4,5,6,36,37,38,67,39,40,66,64,46,8,35,9],trips:[]},weekend:{stops:[10,11,12,13,14,15,16,17,18,35,1,2,59,3,4,5,6,36,37,38,67,39,40,66,64,46,8,35,9],trips:[]}}},
+  RX2:{label:"Route X2",color:"#98989d",data:{weekday:{stops:[17,18,1,2,59,3,4,5,6,8,9,10,11,12,13,14,15,16],trips:[]},weekend:{stops:[17,18,1,2,59,3,4,5,6,8,9,10,11,12,13,14,15,16],trips:[]}}},
+  RX3:{label:"Route X3",color:"#ff9f0a",data:{weekday:{stops:[28,27,62,58,24,18,35,1,47,63,68,69,70,4,5,6,47,46,37,38,67,39,40,66,64,46,8,35,9,52],trips:[]},weekend:{stops:[28,27,62,58,24,18,35,1,47,63,68,69,70,4,5,6,47,46,37,38,67,39,40,66,64,46,8,35,9,52],trips:[]}}},
+};
+
+// STATE
+let map,stopMarkers={},activeStop=null,favorites=[],weather=null;
+let adminMode=false,adminTab='stops',selectedRoute='R1',selectedDay='weekday';
+
+const HOLIDAYS=new Set(['01-01','01-06','05-01','06-21','12-24','12-25','12-26','12-31']);
+const wIcon=c=>c===0?'☀️':c<=2?'⛅':c===3?'☁️':'🌧️';
+
+function getSchedule(d){const dow=d.getDay(),mm=String(d.getMonth()+1).padStart(2,'0'),dd=String(d.getDate()).padStart(2,'0');return(dow===0||dow===6||HOLIDAYS.has(`${mm}-${dd}`))?' weekend':'weekday';}
+function nuukNow(){return new Date(new Date().toLocaleString('en-US',{timeZone:'America/Godthab'}));}
+function toMins(t){if(!t||t==='-')return null;const[h,m]=t.split(':').map(Number);return h*60+m;}
+function fmtMins(m){if(m==null)return null;const h=Math.floor(m/60)%24,mm=m%60;return`${String(h).padStart(2,'0')}:${String(mm).padStart(2,'0')}`;}
+function minsLabel(m){if(m<=0)return'now';if(m<60)return`${m}m`;return`${Math.floor(m/60)}h ${m%60}m`;}
+
+function getPickedMins(){const t=document.getElementById('pick-time').value;if(!t){const n=nuukNow();return n.getHours()*60+n.getMinutes();}return toMins(t+':00')||0;}
+function getPickedSched(){const d=document.getElementById('pick-date').value;const dt=d?new Date(d+'T12:00:00'):nuukNow();return getSchedule(dt);}
+function isPickedToday(){const d=document.getElementById('pick-date').value;if(!d)return true;const now=nuukNow();const today=`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;return d===today;}
+
+// Get times for a stop from new TIMETABLES format
+function getStopTimes(sk,sid){
+  const result=[];
+  for(const[rk,rt]of Object.entries(TIMETABLES)){
+    const routeData=rt.data[sk];
+    if(!routeData)continue;
+    const col=routeData.stops.indexOf(parseInt(sid));
+    if(col<0)continue;
+    const times=routeData.trips.map(trip=>toMins(trip[col])).filter(Boolean);
+    result.push({rk,label:rt.label,color:rt.color,times});
+  }
+  return result;
+}
+
+// MAP
+function initMap(){
+  map=L.map('map',{zoomControl:false}).setView([64.1858,-51.7150],14);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{attribution:'© OSM',maxZoom:19,minZoom:10}).addTo(map);
+  L.control.zoom({position:'bottomright'}).addTo(map);
+  for(const[sidStr,[lat,lng,name]]of Object.entries(STOPS)){
+    const sid=parseInt(sidStr);
+    const mk=L.marker([lat,lng],{icon:L.divIcon({html:`<div class="sm" style="background:#1a73e8" title="${name}">${sid}</div>`,className:'',iconSize:[28,28],iconAnchor:[14,14]})});
+    mk.on('click',()=>selectStop(sid));
+    stopMarkers[sid]=mk;
+    mk.addTo(map);
+  }
+  initSheetDrag();
+  setSheet('half');
+  renderDefaultSheet();
+}
+
+function selectStop(sid){
+  if(activeStop){const el=stopMarkers[activeStop]?.getElement()?.querySelector('.sm');if(el)el.classList.remove('active');}
+  activeStop=sid;
+  const el=stopMarkers[sid]?.getElement()?.querySelector('.sm');
+  if(el)el.classList.add('active');
+  renderStopSheet(sid);
+  setSheet('half');
+}
+
+function setSheet(state){const s=document.getElementById('sheet');s.className='';if(state)s.classList.add(state);}
+function initSheetDrag(){document.getElementById('sheet-handle-wrap').addEventListener('click',()=>{if(adminMode)return;setSheet(document.getElementById('sheet').classList.contains('half')?'full':'half');});}
+
+function renderDefaultSheet(){
+  const sk=getPickedSched();
+  const nowMins=getPickedMins();
+  const isToday=isPickedToday();
+  let html='';
+  if(weather){const rec=weather.wind_gusts_10m>65?{mode:'Taxi',emoji:'🚕',color:'#d93025'}:{mode:'Bus ✓',emoji:'🚌',color:'#1e8e3e'};html+=`<div class="sheet-section"><div style="display:flex;align-items:center;gap:10px;background:#f8f9fa;border-radius:12px;padding:10px 14px"><div style="font-size:20px">${wIcon(weather.weather_code)}</div><div><div style="font-size:18px;font-weight:700;color:#202124">${Math.round(weather.temperature_2m)}°C</div><div style="font-size:11px;color:#9aa0a6">Wind ${Math.round(weather.wind_speed_10m)} km/h</div></div><div style="margin-left:auto;text-align:center"><div style="font-size:14px">${rec.emoji}</div><div style="font-size:11px;font-weight:600;color:${rec.color}">${rec.mode}</div></div></div></div>`;}
+  if(favorites.length>0){html+=`<div class="sheet-section"><div class="sheet-title">Saved</div>`;for(const fav of favorites){html+=`<div class="fav-item" onclick="selectStop(${fav.stopId})" style="display:flex;align-items:center;gap:10px;padding:10px 12px;background:#f8f9fa;border-radius:12px;cursor:pointer;margin-bottom:6px"><div style="font-size:16px">📍</div><div style="flex:1"><div style="font-size:14px;font-weight:500;color:#202124">${fav.name}</div></div></div>`;}html+=`</div>`;}
+  document.getElementById('sheet-scroll').innerHTML=html;
+}
+
+function renderStopSheet(sid){
+  const[lat,lng,name]=STOPS[sid]||[0,0,`Stop ${sid}`];
+  const sk=getPickedSched();
+  const fromMins=getPickedMins();
+  const isToday=isPickedToday();
+  const routeData=getStopTimes(sk,sid);
+  let html=`<div class="sheet-section"><div><div class="stop-name-big">${name}</div><div class="stop-num-small">Stop #${sid}</div></div>`;
+  if(routeData.length===0){html+=`<div class="no-svc" style="margin-top:10px">No service.</div>`;}
+  for(const{rk,label,color,times}of routeData){let upcoming=times,past=[];if(isToday){past=times.filter(m=>m<fromMins).slice(-2);upcoming=times.filter(m=>m>=fromMins).slice(0,6);}else{upcoming=times.slice(0,8);}html+=`<div class="route-row"><div class="route-row-head"><span class="route-badge" style="background:${color}">${label}</span><span class="route-trips">${times.length}/day</span></div><div class="chips">${past.map(m=>`<span class="chip chip-past">${fmtMins(m)}</span>`).join('')}${isToday?(upcoming.length>0?upcoming.map((m,i)=>`<span class="chip ${i===0?'chip-next':'chip-soon'}">${fmtMins(m)}${i===0?` (${minsLabel(m-fromMins)})`:''}</span>`).join(''):'<span class="no-svc">No more</span>'):(upcoming.map(m=>`<span class="chip chip-soon">${fmtMins(m)}</span>`).join(''))}</div></div>`;}
+  html+=`</div>`;
+  document.getElementById('sheet-scroll').innerHTML=html;
+}
+
+// ADMIN
+function toggleAdmin(){
+  adminMode=!adminMode;
+  if(adminMode){
+    document.getElementById('admin-editor').classList.add('show');
+    document.getElementById('fabs').classList.add('hidden');
+    document.getElementById('sheet').classList.add('hidden');
+    document.getElementById('admin-toggle').classList.add('active');
+    switchEditorTab('stops');
+  }else{
+    closeAdmin();
+  }
+}
+
+function closeAdmin(){
+  adminMode=false;
+  document.getElementById('admin-editor').classList.remove('show');
+  document.getElementById('fabs').classList.remove('hidden');
+  document.getElementById('sheet').classList.remove('hidden');
+  document.getElementById('admin-toggle').classList.remove('active');
+}
+
+function switchEditorTab(tab){
+  adminTab=tab;
+  document.querySelectorAll('.editor-tab').forEach(b=>b.classList.remove('active'));
+  event.target.classList.add('active');
+  
+  const content=document.getElementById('editor-content');
+  if(tab==='stops'){
+    content.innerHTML=`<div><h3 style="margin-bottom:12px">Stop Positions</h3><p style="font-size:12px;color:#5f6368;margin-bottom:12px">Coming soon: Drag stops on the map to correct positions</p></div>`;
+  }else if(tab==='timetables'){
+    renderTimetableEditor();
+  }
+}
+
+function renderTimetableEditor(){
+  const routes=Object.entries(TIMETABLES).map(([k,v])=>`<button class="route-btn ${k===selectedRoute?'active':''}" onclick="selectRoute('${k}')">${v.label}</button>`).join('');
+  const days=`<button class="day-btn ${selectedDay==='weekday'?'active':''}" onclick="selectDay('weekday')">Weekday</button><button class="day-btn ${selectedDay==='weekend'?'active':''}" onclick="selectDay('weekend')">Weekend</button>`;
+  
+  const route=TIMETABLES[selectedRoute];
+  const dayData=route.data[selectedDay];
+  const tripEditors=dayData.trips.map((trip,idx)=>{
+    const times=trip.map((t,sidx)=>`<input type="text" value="${t}" onchange="editTrip('${selectedRoute}','${selectedDay}',${idx},${sidx},this.value)" style="flex:1;padding:4px 6px;border:1px solid #dadce0;font-family:monospace;font-size:11px">`).join('');
+    return`<div class="trip-row" style="display:flex;gap:4px;align-items:center"><span style="font-size:11px;color:#9aa0a6;min-width:40px">Trip ${idx+1}:</span>${times}</div>`;
+  }).join('');
+  
+  const html=`
+    <div style="margin-bottom:12px">
+      <h3 style="font-size:13px;font-weight:700;margin-bottom:8px">Select Route</h3>
+      <div class="route-selector">${routes}</div>
+    </div>
+    <div style="margin-bottom:12px">
+      <h3 style="font-size:13px;font-weight:700;margin-bottom:8px">Day Type</h3>
+      <div class="day-selector">${days}</div>
+    </div>
+    <div style="margin-bottom:12px">
+      <h3 style="font-size:13px;font-weight:700;margin-bottom:8px">Trips (${dayData.stops.length} stops)</h3>
+      <div style="font-size:10px;color:#9aa0a6;margin-bottom:8px">Stops: ${dayData.stops.join(', ')}</div>
+      <div class="timetable-view">${tripEditors}</div>
+    </div>
+    <button class="editor-btn success" style="width:100%" onclick="openImportModal()">📥 Import Timetables</button>
+    <button class="editor-btn" style="width:100%;margin-top:8px" onclick="openPromptModal()">📋 Show Claude Prompt</button>
+  `;
+  document.getElementById('editor-content').innerHTML=html;
+}
+
+function selectRoute(rk){selectedRoute=rk;renderTimetableEditor();}
+function selectDay(d){selectedDay=d;renderTimetableEditor();}
+function editTrip(rk,day,tripIdx,stopIdx,val){TIMETABLES[rk].data[day].trips[tripIdx][stopIdx]=val;}
+
+function openImportModal(){document.getElementById('import-modal').classList.add('show');}
+function closeImportModal(){document.getElementById('import-modal').classList.remove('show');}
+
+function importTimetables(){
+  const text=document.getElementById('import-text').value.trim();
+  if(!text){alert('Paste timetable data');return;}
+  const lines=text.split('\n').filter(l=>l.trim());
+  let idx=0;
+  while(idx<lines.length){
+    const[rk,day]=lines[idx].split('|');
+    const stops=lines[idx+1].split(',').map(s=>parseInt(s.trim()));
+    const trips=[];
+    idx+=2;
+    while(idx<lines.length&&!lines[idx].includes('|')){
+      trips.push(lines[idx].trim().split(/\s+/));
+      idx++;
+    }
+    if(TIMETABLES[rk]){
+      TIMETABLES[rk].data[day]={stops,trips};
+    }
+  }
+  saveTimetables();
+  closeImportModal();
+  renderTimetableEditor();
+  alert('✓ Timetables imported!');
+}
+
+function openPromptModal(){
+  const prompt=`I'm going to share a Nuup Bussii bus timetable PDF. Please extract the timetable data for each route in this exact format:
+
+ROUTEID|DAY
+STOPID,STOPID,...
+TIME TIME TIME ...
+TIME TIME TIME ...
+(one line per trip)
+
+Example:
+R1|weekday
+18,1,47,63,50,54
+05:49 05:50 05:53 05:54 05:56 05:58
+06:09 06:10 06:13 06:14 06:16 06:18
+
+For each route and day (weekday/weekend), provide all trips with times for each stop.`;
+  document.getElementById('prompt-display').textContent=prompt;
+  document.getElementById('prompt-modal').classList.add('show');
+}
+
+function closePromptModal(){document.getElementById('prompt-modal').classList.remove('show');}
+
+function copyPrompt(){
+  const text=document.getElementById('prompt-display').textContent;
+  navigator.clipboard.writeText(text).then(()=>alert('✓ Copied to clipboard')).catch(()=>alert('Copy failed'));
+}
+
+// STORAGE
+async function saveTimetables(){try{await window.storage.set('nuup_timetables_v5',JSON.stringify(TIMETABLES));}catch{}}
+async function loadTimetables(){try{const r=await window.storage.get('nuup_timetables_v5');if(r)TIMETABLES=JSON.parse(r.value);}catch{}}
+
+// FAVORITES
+async function loadFavorites(){try{const r=await window.storage.get('nuup_favs_v5');if(r)favorites=JSON.parse(r.value);}catch{}}
+function toggleFavPanel(){activeStop=null;setSheet('half');renderDefaultSheet();}
+function goToGPS(){navigator.geolocation.getCurrentPosition(pos=>{map.setView([pos.coords.latitude,pos.coords.longitude],16);},()=>{});}
+
+// WEATHER
+async function fetchWeather(){try{const r=await fetch('https://api.open-meteo.com/v1/forecast?latitude=64.1836&longitude=-51.7214&current=temperature_2m,wind_speed_10m,wind_gusts_10m,weather_code&wind_speed_unit=kmh&timezone=America%2FGodthab');const d=await r.json();weather=d.current;renderDefaultSheet();}catch{}}
+
+// DATE PICKERS
+function initPickers(){
+  const now=nuukNow();
+  const dateEl=document.getElementById('pick-date');
+  const timeEl=document.getElementById('pick-time');
+  const badgeEl=document.getElementById('sched-badge');
+  const today=`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;
+  dateEl.value=today;
+  timeEl.value=`${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
+  function updateBadge(){const sk=getPickedSched();badgeEl.textContent=sk==='weekday'?'Weekday':'Weekend';badgeEl.className='sched-badge '+(sk==='weekday'?'s-wd':'s-we');if(activeStop)renderStopSheet(activeStop);else renderDefaultSheet();}
+  dateEl.addEventListener('change',updateBadge);
+  timeEl.addEventListener('change',()=>{if(activeStop)renderStopSheet(activeStop);else renderDefaultSheet();});
+  setInterval(()=>{if(isPickedToday()){const n=nuukNow();timeEl.value=`${String(n.getHours()).padStart(2,'0')}:${String(n.getMinutes()).padStart(2,'0')}`;if(activeStop)renderStopSheet(activeStop);}},60000);
+}
+
+window.addEventListener('DOMContentLoaded',async()=>{await loadTimetables();await loadFavorites();initPickers();initMap();fetchWeather();});
+</script>
+</body>
+</html>

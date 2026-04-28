@@ -1,0 +1,40 @@
+# OS
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+
+# IDE
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# Editor backups
+*.bak
+*.tmp
+*.old
+
+# Node (if ever used)
+node_modules/
+package-lock.json
+yarn.lock
+
+# Logs
+*.log
+npm-debug.log*
+
+# Local development
+.env
+.env.local
+
+# Temporary files
+temp/
+tmp/
+.cache/
+
+# Keep the backups folder but ignore large files within it
+# Uncommment if needed:
+# backups/*.json
+# backups/*.csv
