@@ -2,7 +2,7 @@
 <!--
 ╔════════════════════════════════════════════════════════════════════════════╗
 ║                         NUUP BUSSII+ TRANSIT APP                          ║
-║                                  v5.0                                      ║
+║                                  v5.1                                      ║
 ║                      Last Updated: 2025-04-28 (April)                      ║
 ╚════════════════════════════════════════════════════════════════════════════╝
 
@@ -14,7 +14,7 @@ ARCHITECTURE:
   • Format: Single self-contained HTML file (no build, no server)
   • Maps: Leaflet.js (OpenStreetMap tiles)
   • Data: Hardcoded STOPS object + imported TIMETABLES
-  • Storage: window.storage API (browser persistence)
+  • Storage: window.storage API (browser persistence) + localStorage for metadata
   • Weather: Open-Meteo API (current conditions)
   • Routes: R1, R2, R3 (daily) + RX2, RX3 (weekday only)
   • Stops: 70+ across Nuuk
@@ -23,6 +23,7 @@ CURRENT STATUS:
   ✅ COMPLETE: All 5 routes with timetables (weekday + weekend)
   ✅ WORKING: Admin timetable editor (route/day/trip selection)
   ✅ WORKING: Timetable import from formatted text
+  ✅ WORKING: Data export/import (backup & restore as JSON)
   ✅ WORKING: Map with colored stops, click for details
   ✅ WORKING: Bottom sheet (peek/half/full states)
   ✅ WORKING: Favorites, weather widget, date/time picker
@@ -32,6 +33,7 @@ TECH STACK:
   • Language: Vanilla JavaScript (no frameworks)
   • Map Library: Leaflet.js 1.9.4
   • Storage API: window.storage (artifact persistence)
+  • Local Storage: localStorage for metadata (export timestamps)
   • API: Open-Meteo (weather, no key required)
   • Browser: Modern browsers (Chrome 90+, Firefox 88+, Safari 14+)
   • Timezone: America/Godthab (Nuuk timezone)
@@ -74,7 +76,10 @@ FEATURES BY MODULE:
   Map: Leaflet map, stops as colored markers, click for timetable
   Bottom Sheet: Peek/half/full states, favorites, weather
   Timetable Logic: Smart time display, color-coded chips, auto-updates
-  Admin Panel: Route selector, day selector, editable trip grid, import/export
+  Admin Panel: 3 tabs
+    • Stops: Coming soon - drag stops on map
+    • Timetables: Route/day selector, editable trip grid, import/export
+    • Data: Export/import JSON backups, restore from previous exports
   Favorites: ★ button saves stops, persists across sessions
   Weather: Current temp/wind, bus/taxi recommendation
   Date/Time Picker: Weekday/weekend scheduling
@@ -85,42 +90,63 @@ IMPORT FORMAT (for Timetables):
   TIME TIME TIME ...
   (one line per trip)
 
+EXPORT FORMAT (Data backups):
+  {
+    "version": "5.0",
+    "exported": "ISO timestamp",
+    "timetables": { ... complete TIMETABLES object ... }
+  }
+
 KNOWN LIMITATIONS:
   ✗ Stop coordinates are approximate
   ✗ RX2/RX3 weekday only
   ✗ Weekend R3 has fewer trips
   ✗ No route planner
-  ✗ Data export/import UI not yet built
+  ✗ Stop position editor not yet built (UI ready)
 
 NEXT PRIORITIES:
-  1. Stop position editor (drag on map)
-  2. Data backup system (export/import JSON)
-  3. Polish (PWA, offline, optimizations)
+  1. Stop position editor (drag on map to correct coords)
+  2. Stop coordinates validation (compare with bus.gl live map)
+  3. PWA support (offline, installable)
 
 HOW TO ITERATE:
-  1. Describe feature in chat
-  2. Claude updates this HTML
-  3. Download, test locally
-  4. git commit -m "feat/fix: description"
-  5. git push to GitHub
+  1. "Add from GitHub" to load this HTML
+  2. Describe feature in chat
+  3. Claude updates and pastes HTML
+  4. Download, test locally
+  5. Upload to GitHub web or via git
+  6. Commit with message
+
+WORKFLOW FOR DATA PERSISTENCE:
+  1. Import timetables via Admin → Timetables → Import
+  2. Go to Admin → Data → Export Timetables as JSON
+  3. Save JSON file to repo backups/ folder (timetables-YYYY-MM-DD.json)
+  4. Commit to GitHub
+  5. Future versions can restore from this backup
+  6. Data lives in repo, not just in browser storage
 
 TESTING CHECKLIST:
   □ Map loads with all stops
   □ Click stop → sheet appears with timetable
   □ Next bus shows with countdown
   □ Admin panel → Timetables works
+  □ Admin panel → Data → Export creates JSON file
+  □ Admin panel → Data → Import restores from JSON
   □ Import button works
   □ Favorites save/delete
   □ No console errors
 
 REPOSITORY:
   nuup-bussii/
-  ├── nuup-bussii-v5.html
+  ├── nuup-bussii-v5.1.html        (this file)
   ├── README.md
   ├── DEVELOPMENT.md
-  └── .gitignore
+  ├── .gitignore
+  └── backups/
+      └── timetables-YYYY-MM-DD.json (exported data)
 
 ═══════════════════════════════════════════════════════════════════════════════
+v5.1 (2025-04-28): Added Data export/import feature for backups & restores
 v5.0 (2025-04-28): All routes imported, admin timetable editor working
 ═══════════════════════════════════════════════════════════════════════════════
 -->
@@ -258,6 +284,7 @@ input[type=date]:focus,input[type=time]:focus{background:#f0f4ff}
   <div class="editor-tabs">
     <button class="editor-tab active" onclick="switchEditorTab('stops')">Stops</button>
     <button class="editor-tab" onclick="switchEditorTab('timetables')">Timetables</button>
+    <button class="editor-tab" onclick="switchEditorTab('data')">Data</button>
   </div>
   <div class="editor-content" id="editor-content">
     <!-- Content filled by JS -->
@@ -456,7 +483,48 @@ function switchEditorTab(tab){
     content.innerHTML=`<div><h3 style="margin-bottom:12px">Stop Positions</h3><p style="font-size:12px;color:#5f6368;margin-bottom:12px">Coming soon: Drag stops on the map to correct positions</p></div>`;
   }else if(tab==='timetables'){
     renderTimetableEditor();
+  }else if(tab==='data'){
+    renderDataTab();
   }
+}
+
+function renderDataTab(){
+  const lastExport=localStorage.getItem('nuup_last_export')||'Never';
+  const html=`
+    <div style="display:flex;flex-direction:column;gap:16px">
+      <div style="background:#f8f9fa;border-radius:12px;padding:14px">
+        <h3 style="font-size:13px;font-weight:700;margin-bottom:8px">💾 Backup & Restore</h3>
+        <p style="font-size:12px;color:#5f6368;line-height:1.5;margin-bottom:12px">
+          Export your timetables as JSON to save in GitHub backups folder. Import to restore anytime.
+        </p>
+        <p style="font-size:11px;color:#bbb;margin-bottom:12px">
+          Last exported: <strong>${lastExport}</strong>
+        </p>
+        <button class="editor-btn success" style="width:100%;padding:10px" onclick="exportData()">📥 Export Timetables as JSON</button>
+      </div>
+      
+      <div style="background:#f8f9fa;border-radius:12px;padding:14px">
+        <h3 style="font-size:13px;font-weight:700;margin-bottom:8px">📤 Restore from Backup</h3>
+        <p style="font-size:12px;color:#5f6368;line-height:1.5;margin-bottom:12px">
+          Paste previously exported JSON data to restore timetables.
+        </p>
+        <textarea id="restore-json" placeholder="Paste exported JSON here..." style="width:100%;padding:10px;border:1.5px solid #dadce0;border-radius:8px;font-family:monospace;font-size:11px;resize:vertical;min-height:150px"></textarea>
+        <button class="editor-btn" style="width:100%;padding:10px;margin-top:8px" onclick="importData()">✓ Restore from JSON</button>
+      </div>
+
+      <div style="background:#fff3e0;border-radius:12px;padding:12px;border-left:4px solid #ff9f0a">
+        <div style="font-size:12px;color:#e65100;font-weight:600">💡 Workflow:</div>
+        <ol style="font-size:11px;color:#bf360c;margin-left:16px;margin-top:6px;line-height:1.6">
+          <li>After importing timetables via admin panel</li>
+          <li>Export as JSON (button above)</li>
+          <li>Save file to repo: <code style="background:#fff;padding:2px 4px">backups/timetables-YYYY-MM-DD.json</code></li>
+          <li>Commit to GitHub</li>
+          <li>Future app versions load your data automatically</li>
+        </ol>
+      </div>
+    </div>
+  `;
+  document.getElementById('editor-content').innerHTML=html;
 }
 
 function renderTimetableEditor(){
@@ -546,6 +614,42 @@ function closePromptModal(){document.getElementById('prompt-modal').classList.re
 function copyPrompt(){
   const text=document.getElementById('prompt-display').textContent;
   navigator.clipboard.writeText(text).then(()=>alert('✓ Copied to clipboard')).catch(()=>alert('Copy failed'));
+}
+
+// DATA EXPORT/IMPORT
+function exportData(){
+  const today=new Date().toISOString().split('T')[0];
+  const data={
+    version:'5.0',
+    exported:new Date().toISOString(),
+    timetables:TIMETABLES
+  };
+  const json=JSON.stringify(data,null,2);
+  const blob=new Blob([json],{type:'application/json'});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a');
+  a.href=url;
+  a.download=`timetables-${today}.json`;
+  a.click();
+  URL.revokeObjectURL(url);
+  localStorage.setItem('nuup_last_export',today);
+  alert(`✓ Exported as timetables-${today}.json\n\nSave to: backups/ folder in repo`);
+  renderDataTab();
+}
+
+function importData(){
+  const json=document.getElementById('restore-json').value.trim();
+  if(!json){alert('Paste JSON data first');return;}
+  try{
+    const data=JSON.parse(json);
+    TIMETABLES=data.timetables||data;
+    saveTimetables();
+    alert('✓ Timetables restored!');
+    document.getElementById('restore-json').value='';
+    renderDataTab();
+  }catch(e){
+    alert('Invalid JSON: '+e.message);
+  }
 }
 
 // STORAGE
